@@ -470,7 +470,7 @@ $(TARGET): $(OBJS)
 ifeq ($(STATIC_LINKING), 1)
 	$(AR) rcs $@ $(OBJS)
 else
-	$(LD) -o $@ $(SHARED) $(OBJS) $(LDFLAGS) $(LIBS)
+	$(LD) -o $@ $(SHARED) $(OBJS) -lws2_32 $(LDFLAGS) $(LIBS)
 endif
 
 clean-objs:

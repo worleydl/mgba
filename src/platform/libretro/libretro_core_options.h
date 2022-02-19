@@ -101,6 +101,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "Autodetect"
    },
    {
+      "mgba_link_server",
+      "Link Server (Restart)",
+      NULL,
+      "Run as master for linkplay mode.",
+      NULL,
+      "system",
+      {
+         { "ON",  "enabled" },
+         { "OFF", "disabled" },
+         { NULL, NULL },
+      },
+      "ON"
+   },
+   {
       "mgba_use_bios",
       "Use BIOS File if Found (Restart)",
       NULL,

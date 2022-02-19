@@ -58,6 +58,9 @@ struct mCoreOptions {
 
 	bool videoSync;
 	bool audioSync;
+
+	// If true, run as server for link play
+	bool linkServer;
 };
 
 void mCoreConfigInit(struct mCoreConfig*, const char* port);
