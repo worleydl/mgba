@@ -1227,12 +1227,6 @@ static void _reloadSettings(void) {
 		opts.skipBios = strcmp(var.value, "ON") == 0;
 	}
 
-	var.key = "mgba_link_server";
-	var.value = 0;
-	if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
-		opts.linkServer = strcmp(var.value, "ON") == 0;
-	}
-
 #ifdef M_CORE_GB
 	var.key = "mgba_sgb_borders";
 	var.value = 0;
@@ -2133,14 +2127,24 @@ bool retro_load_game(const struct retro_game_info* game) {
 	core->reset(core);
 
 	// Register TCP SIO driver
+	struct retro_variable var = {
+		.key = "mgba_link_server",
+		.value = 0
+	};
+	if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		core->opts.linkServer = strcmp(var.value, "ON") == 0;
+	}
+
 	#ifdef M_CORE_GB
 	struct GB* gb = (struct GB*) core->board;
     struct GBSIOLockstep* m_gbLockstep = malloc(sizeof(struct GBSIOLockstep));
+	GBSIOLockstepInit(m_gbLockstep, core->opts.linkServer);
     struct GBSIOLockstepNode* node = malloc(sizeof(struct GBSIOLockstepNode));
     GBSIOLockstepNodeCreate(node);
 	node->p = m_gbLockstep;
 	GBSIOSetDriver(&gb->sio, &node->d);
 	#endif
+
 	_setupMaps(core);
 
 #if defined(COLOR_16_BIT) && defined(COLOR_5_6_5)

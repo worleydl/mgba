@@ -22,28 +22,37 @@ void GBSIOLockstepInit(struct GBSIOLockstep* lockstep, bool server) {
 	lockstep->masterClaimed = false;
 	lockstep->server = server;
 
-	// DEBUG
-	lockstep->server = false;
-
 	struct Address serverIP = {
 		.version = IPV4,
 		.ipv4 = 0x7F000001
 	};
 
-	/*
+	SocketSubsystemInit();
 	if (server) {
-		lockstep->server_data = SocketOpenTCP(27500, &serverIP);
-		lockstep->server_clock = SocketOpenTCP(27501, &serverIP);
-		SocketListen(lockstep->data, 1);
-		SocketListen(lockstep->clock, 1);
+		mLOG(GB_SIO, DEBUG, "Running TCPLINK server mode");
+		lockstep->server_data = SocketOpenTCP(27500, NULL);
+		lockstep->server_clock = SocketOpenTCP(27501, NULL);
+		SocketListen(lockstep->server_data, 1);
+		SocketListen(lockstep->server_clock, 1);
 
-		lockstep->data = SocketAccept(lockstep->data, NULL);
-		lockstep->clock = SocketAccept(lockstep->clock, NULL);
+
+		mLOG(GB_SIO, DEBUG, "Sockets opened, awaiting connection...");
+		mLOG(GB_SIO, DEBUG, "Data: %i Clock: %i", lockstep->server_data, lockstep->server_clock);
+
+		lockstep->data = -1;
+		lockstep->clock = -1;
+
+		while (lockstep->data == -1) {
+			//mLOG(GB_SIO, DEBUG, "Awaiting...");
+			lockstep->data = SocketAccept(lockstep->server_data, NULL);
+			lockstep->clock = SocketAccept(lockstep->server_clock, NULL);
+		}
+		mLOG(GB_SIO, DEBUG, "Connection established.");
 	} else {
+		mLOG(GB_SIO, DEBUG, "Running TCPLINK client mode");
 		lockstep->data = SocketConnectTCP(27500, &serverIP);
 		lockstep->clock = SocketConnectTCP(27501, &serverIP);
 	}
-	*/
 }
 
 void GBSIOLockstepNodeCreate(struct GBSIOLockstepNode* node) {
@@ -63,7 +72,7 @@ bool GBSIOLockstepNodeInit(struct GBSIODriver* driver) {
 
 	node->nextEvent = 0;
 	node->eventDiff = 0;
-	//mTimingSchedule(&driver->p->p->timing, &node->event, 0);
+	mTimingSchedule(&driver->p->p->timing, &node->event, 0);
 #ifndef NDEBUG
 	node->phase = node->p->d.transferActive;
 	node->transferId = node->p->d.transferId;
@@ -75,20 +84,22 @@ void GBSIOLockstepNodeDeinit(struct GBSIODriver* driver) {
 	struct GBSIOLockstepNode* node = (struct GBSIOLockstepNode*) driver;
 	node->p->d.unload(&node->p->d, node->id);
 	mTimingDeschedule(&driver->p->p->timing, &node->event);
+	SocketSubsystemDeinit();
 }
 
 static void _GBSIOLockstepNodeProcessEvents(struct mTiming* timing, void* user, uint32_t cyclesLate) {
 	struct GBSIOLockstepNode* node = user;
 
-	/*
 	if (!node->p->server) {
 		Socket r = node->p->clock;
 		// Clock data only means to initiate a transfer, get ready to send over our pending bits!
 		if (SocketPoll(1, &r, 0, 0, 32)) {
 			node->p->d.transferActive = TRANSFER_STARTING;
+			uint8_t buffer[32];
+			// Flush the buffer
+			while (SocketRecv(node->p->clock, buffer, sizeof(buffer)) == sizeof(buffer));
 		}
 	}
-	*/
 
 	switch (node->p->d.transferActive) {
 		case TRANSFER_IDLE:
@@ -97,7 +108,6 @@ static void _GBSIOLockstepNodeProcessEvents(struct mTiming* timing, void* user, 
 			node->p->d.transferActive = TRANSFER_FINISHED;
 			mTimingSchedule(timing, &node->event, 8);
 
-			/*
 			if (node->p->server) {
 				// Send our data
 				SocketSend(node->p->data, &node->p->pendingSB, sizeof(node->p->pendingSB));
@@ -110,7 +120,6 @@ static void _GBSIOLockstepNodeProcessEvents(struct mTiming* timing, void* user, 
 				SocketSend(node->p->data, &node->p->pendingSB, sizeof(node->p->pendingSB));
 				node->p->pendingSB = copy;
 			}
-			*/
 			break;
 		case TRANSFER_FINISHED:
 			// Copy over SB data to live SIO register
