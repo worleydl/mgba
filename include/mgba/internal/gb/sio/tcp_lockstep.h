@@ -14,12 +14,17 @@ CXX_GUARD_START
 #include <mgba/core/timing.h>
 #include <mgba/internal/gb/sio.h>
 #include <mgba-util/socket.h>
+#include <mgba/gb/interface.h>
 
-struct GBSIOLockstep {
+struct GBSIOSocket {
 	bool server;
 
-	struct mLockstep d;
-	struct GBSIOLockstepNode* player;
+	struct GBSIODriver d;
+	struct mTimingEvent event;
+
+	int32_t transferCycles;
+	enum mLockstepPhase transferActive;
+
 
 	Socket data;
 	Socket clock;
@@ -28,30 +33,11 @@ struct GBSIOLockstep {
 	Socket server_clock;
 
 	uint8_t pendingSB;
-	bool masterClaimed;
 };
 
-struct GBSIOLockstepNode {
-	struct GBSIODriver d;
-	struct GBSIOLockstep* p;
-	struct mTimingEvent event;
+void GBSIOSocketConnect(struct GBSIOSocket*, bool server);
+void GBSIOSocketCreate(struct GBSIOSocket*);
 
-	volatile int32_t nextEvent;
-	int32_t eventDiff;
-	int id;
-	bool transferFinished;
-#ifndef NDEBUG
-	int transferId;
-	enum mLockstepPhase phase;
-#endif
-};
-
-void GBSIOLockstepInit(struct GBSIOLockstep*, bool server);
-
-void GBSIOLockstepNodeCreate(struct GBSIOLockstepNode*);
-
-bool GBSIOLockstepAttachNode(struct GBSIOLockstep*, struct GBSIOLockstepNode*);
-void GBSIOLockstepDetachNode(struct GBSIOLockstep*, struct GBSIOLockstepNode*);
 
 CXX_GUARD_END
 

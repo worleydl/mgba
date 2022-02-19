@@ -2137,12 +2137,11 @@ bool retro_load_game(const struct retro_game_info* game) {
 
 	#ifdef M_CORE_GB
 	struct GB* gb = (struct GB*) core->board;
-    struct GBSIOLockstep* m_gbLockstep = malloc(sizeof(struct GBSIOLockstep));
-	GBSIOLockstepInit(m_gbLockstep, core->opts.linkServer);
-    struct GBSIOLockstepNode* node = malloc(sizeof(struct GBSIOLockstepNode));
-    GBSIOLockstepNodeCreate(node);
-	node->p = m_gbLockstep;
-	GBSIOSetDriver(&gb->sio, &node->d);
+	struct GBSIOSocket* sock = malloc(sizeof(struct GBSIOSocket));
+	GBSIOSocketCreate(sock);
+	GBSIOSocketConnect(sock, core->opts.linkServer);
+	GBSIOSetDriver(&gb->sio, &sock->d);
+
 	#endif
 
 	_setupMaps(core);
