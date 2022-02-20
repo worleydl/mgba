@@ -32,8 +32,7 @@ struct GBSIOSocket {
 	Socket server_clock;
 
 	uint8_t pendingSB;
-	bool wantClock;
-	bool receivedClock;
+	bool waiting;
 
 	Mutex lock;
 };

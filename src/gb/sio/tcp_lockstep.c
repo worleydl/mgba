@@ -47,8 +47,7 @@ void GBSIOSocketCreate(struct GBSIOSocket* sock) {
 	sock->d.writeSC = GBSIOSocketWriteSC;
 	sock->transferActive = 0;
 
-	sock->wantClock = false;
-	sock->receivedClock = false;
+	sock->waiting = false;
 
 	MutexInit(&sock->lock);
 }
@@ -88,71 +87,41 @@ void GBSIOSocketConnect(struct GBSIOSocket* sock, bool server) {
 		sock->clock = SocketConnectTCP(27501, &serverIP);
 	}
 
-	SocketSetBlocking(sock->data, true);
+	SocketSetBlocking(sock->data, false);
 	SocketSetBlocking(sock->clock, false);
-	//SocketSetTCPPush(sock->data, true);
+	SocketSetTCPPush(sock->data, true);
 
 }
 
 static void _GBSIOSocketProcessEvents(struct mTiming* timing, void* user, uint32_t cyclesLate) {
 	struct GBSIOSocket* node = user;
+	uint8_t update;
+	uint8_t buffer[32];
 
-	// Check for clock, if seen go into transfer mode to receive updates
-	if (node->transferActive == TRANSFER_IDLE) {
-		uint8_t buffer[32];
-		if (SocketRecv(node->clock, buffer, sizeof("HELO")) == sizeof("HELO")) {
-			node->receivedClock = true;
-			node->wantClock = false;
-			node->transferActive = TRANSFER_STARTING;
+	MutexLock(&node->lock);
+	if (node->waiting || SocketRecv(node->clock, buffer, sizeof("HELO")) == sizeof("HELO")) {
+		Socket r = node->data;
+		SocketPoll(1, &r, 0, 0, LOCKSTEP_INCREMENT);
+		SocketRecv(node->data, &update, sizeof(uint8_t));
+
+		// Copy over SB data to live SIO register
+		node->d.p->pendingSB = update;
+		if (GBRegisterSCIsEnable(node->d.p->p->memory.io[GB_REG_SC])) {
+			node->d.p->remainingBits = 8;
+			mTimingDeschedule(timing, &node->d.p->event);
+			mTimingSchedule(timing, &node->d.p->event, 0);
 		}
-		else if (node->wantClock) {
-			node->transferActive = TRANSFER_STARTING;
-			//mTimingDeschedule(timing, &node->d.p->event);
+
+		// If signal came from clock we need to respond
+		if (!node->waiting) {
+			SocketSend(node->data, &node->pendingSB, sizeof(uint8_t));
 		}
+		node->waiting = false;
 	}
 
-	switch (node->transferActive) {
-		case TRANSFER_IDLE:
-			mTimingSchedule(timing, &node->event, LOCKSTEP_INCREMENT);
-			break;
-		case TRANSFER_STARTING:
-			MutexLock(&node->lock);
-			if (node->receivedClock) {
-				uint8_t copy = 0;
-				Socket r = node->data;
-				//SocketPoll(1, &r, 0, 0, LOCKSTEP_INCREMENT);
-				SocketRecv(node->data, &copy, sizeof(uint8_t));
+	MutexUnlock(&node->lock);
 
-				SocketSend(node->data, &node->pendingSB, sizeof(uint8_t));
-				node->pendingSB = copy;
-			// No data to collect, send ours
-			} else {
-				SocketSend(node->data, &node->pendingSB, sizeof(uint8_t));
-				Socket r = node->data;
-				//SocketPoll(1, &r, 0, 0, LOCKSTEP_INCREMENT);
-				SocketRecv(node->data, &node->pendingSB, sizeof(uint8_t) < 1);
-				node->wantClock = false;
-			}
-
-			node->transferActive = TRANSFER_FINISHED;
-			mTimingSchedule(timing, &node->event, 16);
-			break;
-		case TRANSFER_FINISHED:
-			// Copy over SB data to live SIO register
-			node->d.p->pendingSB = node->pendingSB;
-			if (GBRegisterSCIsEnable(node->d.p->p->memory.io[GB_REG_SC])) {
-				node->d.p->remainingBits = 8;
-				mTimingDeschedule(timing, &node->d.p->event);
-				mTimingSchedule(timing, &node->d.p->event, 0);
-			}
-			node->receivedClock = false;
-			MutexUnlock(&node->lock);
-
-			// Fallthru
-		default:
-			node->transferActive = TRANSFER_IDLE;
-			mTimingSchedule(timing, &node->event, 0); // TODO: Experiment with timing
-	}
+	mTimingSchedule(timing, &node->event, 16); // TODO: Experiment with timing
 }
 
 static void GBSIOSocketWriteSB(struct GBSIODriver* driver, uint8_t value) {
@@ -164,10 +133,12 @@ static uint8_t GBSIOSocketWriteSC(struct GBSIODriver* driver, uint8_t value) {
 	struct GBSIOSocket* node = (struct GBSIOSocket*) driver;
 	// We want to send some data
 	MutexLock(&node->lock);
-	if (!node->receivedClock && (value & 0x81) == 0x81) {
-		node->transferCycles = GBSIOCyclesPerTransfer[(value >> 1) & 1];
+	if ((value & 0x81) == 0x81) {
+		// Shots fired
 		SocketSend(node->clock, "HELO", sizeof("HELO"));
-		node->wantClock = true;
+		SocketSend(node->data, &node->pendingSB, sizeof(uint8_t));
+		node->waiting = true;
+
 		mTimingDeschedule(&driver->p->p->timing, &node->d.p->event);
 		mTimingDeschedule(&driver->p->p->timing, &node->event);
 		mTimingSchedule(&driver->p->p->timing, &node->event, 0);
