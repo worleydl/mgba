@@ -15,6 +15,7 @@ CXX_GUARD_START
 #include <mgba/internal/gb/sio.h>
 #include <mgba-util/socket.h>
 #include <mgba/gb/interface.h>
+#include <mgba-util/threading.h>
 
 struct GBSIOSocket {
 	struct GBSIODriver d;
@@ -33,6 +34,8 @@ struct GBSIOSocket {
 	uint8_t pendingSB;
 	bool wantClock;
 	bool receivedClock;
+
+	Mutex lock;
 };
 
 void GBSIOSocketConnect(struct GBSIOSocket*, bool server);

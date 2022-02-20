@@ -49,6 +49,8 @@ void GBSIOSocketCreate(struct GBSIOSocket* sock) {
 
 	sock->wantClock = false;
 	sock->receivedClock = false;
+
+	MutexInit(&sock->lock);
 }
 
 void GBSIOSocketConnect(struct GBSIOSocket* sock, bool server) {
@@ -98,14 +100,12 @@ static void _GBSIOSocketProcessEvents(struct mTiming* timing, void* user, uint32
 	// Check for clock, if seen go into transfer mode to receive updates
 	if (node->transferActive == TRANSFER_IDLE) {
 		uint8_t buffer[32];
-		Socket r = node->clock;
-
 		if (SocketRecv(node->clock, buffer, sizeof("HELO")) == sizeof("HELO")) {
-
-			node->transferActive = TRANSFER_STARTING;
 			node->receivedClock = true;
-		// We wanted clock and passed checks dive. into transfer
-		} else if (node->wantClock) {
+			node->wantClock = false;
+			node->transferActive = TRANSFER_STARTING;
+		}
+		else if (node->wantClock) {
 			node->transferActive = TRANSFER_STARTING;
 			//mTimingDeschedule(timing, &node->d.p->event);
 		}
@@ -116,6 +116,7 @@ static void _GBSIOSocketProcessEvents(struct mTiming* timing, void* user, uint32
 			mTimingSchedule(timing, &node->event, LOCKSTEP_INCREMENT);
 			break;
 		case TRANSFER_STARTING:
+			MutexLock(&node->lock);
 			if (node->receivedClock) {
 				uint8_t copy = 0;
 				Socket r = node->data;
@@ -145,6 +146,7 @@ static void _GBSIOSocketProcessEvents(struct mTiming* timing, void* user, uint32
 				mTimingSchedule(timing, &node->d.p->event, 0);
 			}
 			node->receivedClock = false;
+			MutexUnlock(&node->lock);
 
 			// Fallthru
 		default:
@@ -160,9 +162,9 @@ static void GBSIOSocketWriteSB(struct GBSIODriver* driver, uint8_t value) {
 
 static uint8_t GBSIOSocketWriteSC(struct GBSIODriver* driver, uint8_t value) {
 	struct GBSIOSocket* node = (struct GBSIOSocket*) driver;
-
 	// We want to send some data
-	if (node->receivedClock && (value & 0x81) == 0x81) {
+	MutexLock(&node->lock);
+	if (!node->receivedClock && (value & 0x81) == 0x81) {
 		node->transferCycles = GBSIOCyclesPerTransfer[(value >> 1) & 1];
 		SocketSend(node->clock, "HELO", sizeof("HELO"));
 		node->wantClock = true;
@@ -170,6 +172,7 @@ static uint8_t GBSIOSocketWriteSC(struct GBSIODriver* driver, uint8_t value) {
 		mTimingDeschedule(&driver->p->p->timing, &node->event);
 		mTimingSchedule(&driver->p->p->timing, &node->event, 0);
 	}
+	MutexUnlock(&node->lock);
 
 	return value;
 }
