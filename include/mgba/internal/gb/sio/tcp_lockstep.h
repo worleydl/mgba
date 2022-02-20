@@ -17,8 +17,6 @@ CXX_GUARD_START
 #include <mgba/gb/interface.h>
 
 struct GBSIOSocket {
-	bool server;
-
 	struct GBSIODriver d;
 	struct mTimingEvent event;
 
@@ -37,6 +35,8 @@ struct GBSIOSocket {
 
 void GBSIOSocketConnect(struct GBSIOSocket*, bool server);
 void GBSIOSocketCreate(struct GBSIOSocket*);
+
+static bool m_serverMode = false;
 
 
 CXX_GUARD_END

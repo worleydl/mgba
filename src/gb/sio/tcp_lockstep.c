@@ -16,6 +16,13 @@ static void GBSIOSocketWriteSB(struct GBSIODriver* driver, uint8_t value);
 static uint8_t GBSIOSocketWriteSC(struct GBSIODriver* driver, uint8_t value);
 static void _GBSIOSocketProcessEvents(struct mTiming* timing, void* driver, uint32_t cyclesLate);
 
+static void _flush(struct GBSIOSocket* sock);
+void _flush(struct GBSIOSocket* sock) {
+	uint8_t buffer[32];
+	while (SocketRecv(sock->clock, buffer, sizeof(buffer)) == sizeof(buffer));
+	while (SocketRecv(sock->data, buffer, sizeof(buffer)) == sizeof(buffer));
+}
+
 bool GBSIOSocketInit(struct GBSIODriver* driver) {
 	struct GBSIOSocket* sock = (struct GBSIOSocket*) driver;
 
@@ -25,6 +32,7 @@ bool GBSIOSocketInit(struct GBSIODriver* driver) {
 	sock->event.priority = 0x80;
 
 	mTimingSchedule(&driver->p->p->timing, &sock->event, 0);
+	return true;
 }
 
 void GBSIOSocketDeinit(struct GBSIODriver* driver) {
@@ -42,7 +50,7 @@ void GBSIOSocketCreate(struct GBSIOSocket* sock) {
 
 void GBSIOSocketConnect(struct GBSIOSocket* sock, bool server) {
 	sock->pendingSB = 0xFF;
-	sock->server = server;
+	m_serverMode = server;
 
 	struct Address serverIP = {
 		.version = IPV4,
@@ -50,7 +58,7 @@ void GBSIOSocketConnect(struct GBSIOSocket* sock, bool server) {
 	};
 
 	SocketSubsystemInit();
-	if (server) {
+	if (m_serverMode) {
 		mLOG(GB_SIO, DEBUG, "Running TCPLINK server mode");
 		sock->server_data = SocketOpenTCP(27500, NULL);
 		sock->server_clock = SocketOpenTCP(27501, NULL);
@@ -65,7 +73,6 @@ void GBSIOSocketConnect(struct GBSIOSocket* sock, bool server) {
 		sock->clock = -1;
 
 		while (sock->data == -1) {
-			//mLOG(GB_SIO, DEBUG, "Awaiting...");
 			sock->data = SocketAccept(sock->server_data, NULL);
 			sock->clock = SocketAccept(sock->server_clock, NULL);
 		}
@@ -74,20 +81,22 @@ void GBSIOSocketConnect(struct GBSIOSocket* sock, bool server) {
 		mLOG(GB_SIO, DEBUG, "Running TCPLINK client mode");
 		sock->data = SocketConnectTCP(27500, &serverIP);
 		sock->clock = SocketConnectTCP(27501, &serverIP);
-
-		SocketSetBlocking(sock->data, false);
-		SocketSetBlocking(sock->clock, false);
-		SocketSetTCPPush(sock->data, true);
 	}
+
+	SocketSetBlocking(sock->data, false);
+	SocketSetBlocking(sock->clock, false);
+	SocketSetTCPPush(sock->data, true);
+
 }
 
 static void _GBSIOSocketProcessEvents(struct mTiming* timing, void* user, uint32_t cyclesLate) {
 	struct GBSIOSocket* node = user;
 
-	if (!node->server) {
+	// Check for clock, if seen go into transfer mode to receive updates
+	if (!m_serverMode && node->transferActive == TRANSFER_IDLE) {
 		uint8_t buffer[32];
 		Socket r = node->clock;
-		SocketPoll(1, &r, 0, 0, 500);
+
 		if (SocketRecv(node->clock, buffer, sizeof("HELO")) == sizeof("HELO")) {
 			node->transferActive = TRANSFER_STARTING;
 		}
@@ -100,20 +109,25 @@ static void _GBSIOSocketProcessEvents(struct mTiming* timing, void* user, uint32
 		case TRANSFER_STARTING:
 			mLOG(GB_SIO, DEBUG, "TCPLINK STARTING");
 			node->transferActive = TRANSFER_FINISHED;
-			mTimingSchedule(timing, &node->event, 8);
 
-			if (node->server) {
+			if (m_serverMode) {
 				// Send our data
-				SocketSend(node->data, &node->pendingSB, sizeof(node->pendingSB));
-				// Overwrite pending buffer to be updated
-				SocketRecv(node->data, &node->pendingSB, sizeof(node->pendingSB));
+				SocketSend(node->data, &node->pendingSB, sizeof(uint8_t));
+
+				Socket r = node->data;
+				SocketRecv(node->data, &node->pendingSB, sizeof(uint8_t));
+				mLOG(GB_SIO, DEBUG, "Server synced SB: %i", node->pendingSB);
 			} else {
 				// TODO: Doublechecking references here on size
-				uint8_t copy;
-				SocketRecv(node->data, &copy, sizeof(copy));
-				SocketSend(node->data, &node->pendingSB, sizeof(node->pendingSB));
+				uint8_t copy = 0;
+				Socket r = node->data;
+				SocketRecv(node->data, &copy, sizeof(uint8_t));
+				SocketSend(node->data, &node->pendingSB, sizeof(uint8_t));
 				node->pendingSB = copy;
+				mLOG(GB_SIO, DEBUG, "Client synced SB: %i", node->pendingSB);
 			}
+
+			mTimingSchedule(timing, &node->event, 0);
 			break;
 		case TRANSFER_FINISHED:
 			// Copy over SB data to live SIO register
@@ -121,12 +135,12 @@ static void _GBSIOSocketProcessEvents(struct mTiming* timing, void* user, uint32
 			node->d.p->pendingSB = node->pendingSB;
 			if (GBRegisterSCIsEnable(node->d.p->p->memory.io[GB_REG_SC])) {
 				node->d.p->remainingBits = 8;
-				mTimingDeschedule(timing, &node->event);
 			}
+
 			// Fallthru
 		default:
 			node->transferActive = TRANSFER_IDLE;
-			mTimingSchedule(timing, &node->event, 0);
+			mTimingSchedule(timing, &node->event, LOCKSTEP_INCREMENT);
 	}
 }
 
@@ -139,7 +153,7 @@ static uint8_t GBSIOSocketWriteSC(struct GBSIODriver* driver, uint8_t value) {
 	struct GBSIOSocket* node = (struct GBSIOSocket*) driver;
 
 	// Only server gets to be master in GB land
-	if ((value & 0x81) == 0x81 && node->server) {
+	if ((value & 0x81) == 0x81 && m_serverMode) {
 		SocketSend(node->clock, "HELO", sizeof("HELO"));
 		node->transferActive = TRANSFER_STARTING;
 		node->transferCycles = GBSIOCyclesPerTransfer[(value >> 1) & 1];

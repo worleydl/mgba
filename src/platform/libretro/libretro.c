@@ -2135,6 +2135,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 		core->opts.linkServer = strcmp(var.value, "ON") == 0;
 	}
 
+	
 	#ifdef M_CORE_GB
 	struct GB* gb = (struct GB*) core->board;
 	struct GBSIOSocket* sock = malloc(sizeof(struct GBSIOSocket));
