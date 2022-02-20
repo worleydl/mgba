@@ -46,6 +46,9 @@ void GBSIOSocketCreate(struct GBSIOSocket* sock) {
 	sock->d.writeSB = GBSIOSocketWriteSB;
 	sock->d.writeSC = GBSIOSocketWriteSC;
 	sock->transferActive = 0;
+
+	sock->wantClock = false;
+	sock->receivedClock = false;
 }
 
 void GBSIOSocketConnect(struct GBSIOSocket* sock, bool server) {
@@ -83,9 +86,9 @@ void GBSIOSocketConnect(struct GBSIOSocket* sock, bool server) {
 		sock->clock = SocketConnectTCP(27501, &serverIP);
 	}
 
-	SocketSetBlocking(sock->data, false);
+	SocketSetBlocking(sock->data, true);
 	SocketSetBlocking(sock->clock, false);
-	SocketSetTCPPush(sock->data, true);
+	//SocketSetTCPPush(sock->data, true);
 
 }
 
@@ -93,12 +96,18 @@ static void _GBSIOSocketProcessEvents(struct mTiming* timing, void* user, uint32
 	struct GBSIOSocket* node = user;
 
 	// Check for clock, if seen go into transfer mode to receive updates
-	if (!m_serverMode && node->transferActive == TRANSFER_IDLE) {
+	if (node->transferActive == TRANSFER_IDLE) {
 		uint8_t buffer[32];
 		Socket r = node->clock;
 
 		if (SocketRecv(node->clock, buffer, sizeof("HELO")) == sizeof("HELO")) {
+
 			node->transferActive = TRANSFER_STARTING;
+			node->receivedClock = true;
+		// We wanted clock and passed checks dive. into transfer
+		} else if (node->wantClock) {
+			node->transferActive = TRANSFER_STARTING;
+			//mTimingDeschedule(timing, &node->d.p->event);
 		}
 	}
 
@@ -107,40 +116,40 @@ static void _GBSIOSocketProcessEvents(struct mTiming* timing, void* user, uint32
 			mTimingSchedule(timing, &node->event, LOCKSTEP_INCREMENT);
 			break;
 		case TRANSFER_STARTING:
-			mLOG(GB_SIO, DEBUG, "TCPLINK STARTING");
-			node->transferActive = TRANSFER_FINISHED;
-
-			if (m_serverMode) {
-				// Send our data
-				SocketSend(node->data, &node->pendingSB, sizeof(uint8_t));
-
-				Socket r = node->data;
-				SocketRecv(node->data, &node->pendingSB, sizeof(uint8_t));
-				mLOG(GB_SIO, DEBUG, "Server synced SB: %i", node->pendingSB);
-			} else {
-				// TODO: Doublechecking references here on size
+			if (node->receivedClock) {
 				uint8_t copy = 0;
 				Socket r = node->data;
+				//SocketPoll(1, &r, 0, 0, LOCKSTEP_INCREMENT);
 				SocketRecv(node->data, &copy, sizeof(uint8_t));
+
 				SocketSend(node->data, &node->pendingSB, sizeof(uint8_t));
 				node->pendingSB = copy;
-				mLOG(GB_SIO, DEBUG, "Client synced SB: %i", node->pendingSB);
+			// No data to collect, send ours
+			} else {
+				SocketSend(node->data, &node->pendingSB, sizeof(uint8_t));
+				Socket r = node->data;
+				//SocketPoll(1, &r, 0, 0, LOCKSTEP_INCREMENT);
+				SocketRecv(node->data, &node->pendingSB, sizeof(uint8_t) < 1);
+				node->wantClock = false;
 			}
 
-			mTimingSchedule(timing, &node->event, 0);
+			node->transferActive = TRANSFER_FINISHED;
+			mTimingSchedule(timing, &node->event, 16);
 			break;
 		case TRANSFER_FINISHED:
 			// Copy over SB data to live SIO register
-			mLOG(GB_SIO, DEBUG, "TCPLINK Finished");
 			node->d.p->pendingSB = node->pendingSB;
 			if (GBRegisterSCIsEnable(node->d.p->p->memory.io[GB_REG_SC])) {
 				node->d.p->remainingBits = 8;
+				mTimingDeschedule(timing, &node->d.p->event);
+				mTimingSchedule(timing, &node->d.p->event, 0);
 			}
+			node->receivedClock = false;
 
 			// Fallthru
 		default:
 			node->transferActive = TRANSFER_IDLE;
-			mTimingSchedule(timing, &node->event, LOCKSTEP_INCREMENT);
+			mTimingSchedule(timing, &node->event, 0); // TODO: Experiment with timing
 	}
 }
 
@@ -152,12 +161,12 @@ static void GBSIOSocketWriteSB(struct GBSIODriver* driver, uint8_t value) {
 static uint8_t GBSIOSocketWriteSC(struct GBSIODriver* driver, uint8_t value) {
 	struct GBSIOSocket* node = (struct GBSIOSocket*) driver;
 
-	// Only server gets to be master in GB land
-	if ((value & 0x81) == 0x81 && m_serverMode) {
-		SocketSend(node->clock, "HELO", sizeof("HELO"));
-		node->transferActive = TRANSFER_STARTING;
+	// We want to send some data
+	if (node->receivedClock && (value & 0x81) == 0x81) {
 		node->transferCycles = GBSIOCyclesPerTransfer[(value >> 1) & 1];
-		mTimingDeschedule(&driver->p->p->timing, &driver->p->event);
+		SocketSend(node->clock, "HELO", sizeof("HELO"));
+		node->wantClock = true;
+		mTimingDeschedule(&driver->p->p->timing, &node->d.p->event);
 		mTimingDeschedule(&driver->p->p->timing, &node->event);
 		mTimingSchedule(&driver->p->p->timing, &node->event, 0);
 	}

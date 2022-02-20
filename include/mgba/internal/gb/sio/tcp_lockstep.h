@@ -31,6 +31,8 @@ struct GBSIOSocket {
 	Socket server_clock;
 
 	uint8_t pendingSB;
+	bool wantClock;
+	bool receivedClock;
 };
 
 void GBSIOSocketConnect(struct GBSIOSocket*, bool server);
