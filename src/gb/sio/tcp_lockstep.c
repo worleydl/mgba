@@ -19,7 +19,6 @@ static void _GBSIOSocketProcessEvents(struct mTiming* timing, void* driver, uint
 static void _flush(struct GBSIOSocket* sock);
 void _flush(struct GBSIOSocket* sock) {
 	uint8_t buffer[32];
-	while (SocketRecv(sock->clock, buffer, sizeof(buffer)) == sizeof(buffer));
 	while (SocketRecv(sock->data, buffer, sizeof(buffer)) == sizeof(buffer));
 }
 
@@ -47,9 +46,8 @@ void GBSIOSocketCreate(struct GBSIOSocket* sock) {
 	sock->d.writeSC = GBSIOSocketWriteSC;
 	sock->transferActive = 0;
 
-	sock->waiting = false;
-
-	MutexInit(&sock->lock);
+	sock->clockRequest[0] = CLOCK_REQUEST;
+	sock->clockResponse[0] = CLOCK_RESPONSE;
 }
 
 void GBSIOSocketConnect(struct GBSIOSocket* sock, bool server) {
@@ -65,63 +63,53 @@ void GBSIOSocketConnect(struct GBSIOSocket* sock, bool server) {
 	if (m_serverMode) {
 		mLOG(GB_SIO, DEBUG, "Running TCPLINK server mode");
 		sock->server_data = SocketOpenTCP(27500, NULL);
-		sock->server_clock = SocketOpenTCP(27501, NULL);
 		SocketListen(sock->server_data, 1);
-		SocketListen(sock->server_clock, 1);
 
 
 		mLOG(GB_SIO, DEBUG, "Sockets opened, awaiting connection...");
-		mLOG(GB_SIO, DEBUG, "Data: %i Clock: %i", sock->server_data, sock->server_clock);
+		mLOG(GB_SIO, DEBUG, "Data: %i", sock->server_data);
 
 		sock->data = -1;
-		sock->clock = -1;
 
 		while (sock->data == -1) {
 			sock->data = SocketAccept(sock->server_data, NULL);
-			sock->clock = SocketAccept(sock->server_clock, NULL);
 		}
 		mLOG(GB_SIO, DEBUG, "Connection established.");
 	} else {
 		mLOG(GB_SIO, DEBUG, "Running TCPLINK client mode");
 		sock->data = SocketConnectTCP(27500, &serverIP);
-		sock->clock = SocketConnectTCP(27501, &serverIP);
 	}
 
 	SocketSetBlocking(sock->data, false);
-	SocketSetBlocking(sock->clock, false);
 	SocketSetTCPPush(sock->data, true);
 
 }
 
 static void _GBSIOSocketProcessEvents(struct mTiming* timing, void* user, uint32_t cyclesLate) {
 	struct GBSIOSocket* node = user;
-	uint8_t update;
-	uint8_t buffer[32];
+	uint8_t buffer[2];
 
 	MutexLock(&node->lock);
-	if (node->waiting || SocketRecv(node->clock, buffer, sizeof("HELO")) == sizeof("HELO")) {
-		Socket r = node->data;
-		SocketPoll(1, &r, 0, 0, LOCKSTEP_INCREMENT);
-		SocketRecv(node->data, &update, sizeof(uint8_t));
 
+	if (SocketRecv(node->data, &buffer, sizeof(buffer)) == sizeof(buffer)){
 		// Copy over SB data to live SIO register
-		node->d.p->pendingSB = update;
+		node->d.p->pendingSB = buffer[1];
 		if (GBRegisterSCIsEnable(node->d.p->p->memory.io[GB_REG_SC])) {
 			node->d.p->remainingBits = 8;
 			mTimingDeschedule(timing, &node->d.p->event);
 			mTimingSchedule(timing, &node->d.p->event, 0);
 		}
 
-		// If signal came from clock we need to respond
-		if (!node->waiting) {
-			SocketSend(node->data, &node->pendingSB, sizeof(uint8_t));
+		if (buffer[0] == CLOCK_REQUEST) {
+			node->clockResponse[1] = node->pendingSB;
+			SocketSend(node->data, &node->clockResponse, sizeof(node->clockResponse));
 		}
-		node->waiting = false;
+
 	}
 
 	MutexUnlock(&node->lock);
 
-	mTimingSchedule(timing, &node->event, 16); // TODO: Experiment with timing
+	mTimingSchedule(timing, &node->event, 64); // TODO: Experiment with timing
 }
 
 static void GBSIOSocketWriteSB(struct GBSIODriver* driver, uint8_t value) {
@@ -134,10 +122,10 @@ static uint8_t GBSIOSocketWriteSC(struct GBSIODriver* driver, uint8_t value) {
 	// We want to send some data
 	MutexLock(&node->lock);
 	if ((value & 0x81) == 0x81) {
+		node->clockRequest[1] = node->pendingSB;
+
 		// Shots fired
-		SocketSend(node->clock, "HELO", sizeof("HELO"));
-		SocketSend(node->data, &node->pendingSB, sizeof(uint8_t));
-		node->waiting = true;
+		SocketSend(node->data, &node->clockRequest, sizeof(node->clockRequest));
 
 		mTimingDeschedule(&driver->p->p->timing, &node->d.p->event);
 		mTimingDeschedule(&driver->p->p->timing, &node->event);

@@ -17,6 +17,12 @@ CXX_GUARD_START
 #include <mgba/gb/interface.h>
 #include <mgba-util/threading.h>
 
+enum SerialXfer {
+	CLOCK_RESPONSE = 0,
+	CLOCK_REQUEST = 1
+};
+
+
 struct GBSIOSocket {
 	struct GBSIODriver d;
 	struct mTimingEvent event;
@@ -24,15 +30,13 @@ struct GBSIOSocket {
 	int32_t transferCycles;
 	enum mLockstepPhase transferActive;
 
-
 	Socket data;
-	Socket clock;
-
 	Socket server_data;
-	Socket server_clock;
 
 	uint8_t pendingSB;
-	bool waiting;
+
+	int8_t clockResponse[2];
+	int8_t clockRequest[2];
 
 	Mutex lock;
 };
