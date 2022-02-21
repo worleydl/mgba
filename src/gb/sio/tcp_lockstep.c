@@ -89,25 +89,25 @@ static void _GBSIOSocketProcessEvents(struct mTiming* timing, void* user, uint32
 	struct GBSIOSocket* node = user;
 	uint8_t buffer[2];
 
-	MutexLock(&node->lock);
 
 	if (SocketRecv(node->data, &buffer, sizeof(buffer)) == sizeof(buffer)){
-		// Copy over SB data to live SIO register
-		node->d.p->pendingSB = buffer[1];
-		if (GBRegisterSCIsEnable(node->d.p->p->memory.io[GB_REG_SC])) {
-			node->d.p->remainingBits = 8;
-			mTimingDeschedule(timing, &node->d.p->event);
-			mTimingSchedule(timing, &node->d.p->event, 0);
-		}
-
 		if (buffer[0] == CLOCK_REQUEST) {
 			node->clockResponse[1] = node->pendingSB;
 			SocketSend(node->data, &node->clockResponse, sizeof(node->clockResponse));
 		}
 
+		// Copy over SB data to live SIO register
+		MutexLock(&node->lock);
+		node->d.p->pendingSB = buffer[1];
+		MutexUnlock(&node->lock);
+
+		if (GBRegisterSCIsEnable(node->d.p->p->memory.io[GB_REG_SC])) {
+			node->d.p->remainingBits = 8;
+			mTimingDeschedule(timing, &node->d.p->event);
+			mTimingSchedule(timing, &node->d.p->event, 0);
+		}
 	}
 
-	MutexUnlock(&node->lock);
 
 	mTimingSchedule(timing, &node->event, 64); // TODO: Experiment with timing
 }
@@ -121,7 +121,7 @@ static uint8_t GBSIOSocketWriteSC(struct GBSIODriver* driver, uint8_t value) {
 	struct GBSIOSocket* node = (struct GBSIOSocket*) driver;
 	// We want to send some data
 	MutexLock(&node->lock);
-	if ((value & 0x81) == 0x81) {
+	if (driver->p->pendingSB == 0xFF && (value & 0x81) == 0x81) {
 		node->clockRequest[1] = node->pendingSB;
 
 		// Shots fired
