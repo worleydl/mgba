@@ -22,27 +22,39 @@ enum SerialXfer {
 	CLOCK_REQUEST = 1
 };
 
+enum TransferState {
+	XFER_IDLE = 0,
+	XFER_STARTED,
+	XFER_FINISHED,
+};
+
 
 struct GBSIOSocket {
 	struct GBSIODriver d;
+
+	enum TransferState state;
+	bool processing;
+	enum mLockstepPhase transferActive;
 	struct mTimingEvent event;
 
-	int32_t transferCycles;
-	enum mLockstepPhase transferActive;
+	Socket clock;
+	Socket server_clock;
 
 	Socket data;
 	Socket server_data;
 
 	uint8_t pendingSB;
+	uint8_t incomingSB;
+	uint16_t waitCycles;
 
 	int8_t clockResponse[2];
 	int8_t clockRequest[2];
-
-	Mutex lock;
 };
 
 void GBSIOSocketConnect(struct GBSIOSocket*, bool server);
 void GBSIOSocketCreate(struct GBSIOSocket*);
+void GBSIOSocketSync(struct GBSIOSocket*);
+bool GBSIOSocketBusy(struct GBSIOSocket*);
 
 static bool m_serverMode = false;
 

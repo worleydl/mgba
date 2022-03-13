@@ -134,6 +134,8 @@ static int32_t audioLowPassRange = 0;
 static int32_t audioLowPassLeftPrev = 0;
 static int32_t audioLowPassRightPrev = 0;
 
+static struct GBSIOSocket* sock;
+
 static const int keymap[] = {
 	RETRO_DEVICE_ID_JOYPAD_A,
 	RETRO_DEVICE_ID_JOYPAD_B,
@@ -1662,6 +1664,8 @@ void retro_run(void) {
       updateAudioLatency = false;
    }
 
+	GBSIOSocketSync(sock);
+
 	core->runFrame(core);
 	unsigned width, height;
 	core->desiredVideoDimensions(core, &width, &height);
@@ -2135,10 +2139,10 @@ bool retro_load_game(const struct retro_game_info* game) {
 		core->opts.linkServer = strcmp(var.value, "ON") == 0;
 	}
 
-	
+
 	#ifdef M_CORE_GB
 	struct GB* gb = (struct GB*) core->board;
-	struct GBSIOSocket* sock = malloc(sizeof(struct GBSIOSocket));
+	sock = malloc(sizeof(struct GBSIOSocket));
 	GBSIOSocketCreate(sock);
 	GBSIOSocketConnect(sock, core->opts.linkServer);
 	GBSIOSetDriver(&gb->sio, &sock->d);
