@@ -32,10 +32,13 @@ enum TransferState {
 struct GBSIOSocket {
 	struct GBSIODriver d;
 
-	enum TransferState state;
+	struct Address serverIP;
+
 	bool processing;
 	enum mLockstepPhase transferActive;
 	struct mTimingEvent event;
+
+	Socket broadcast;
 
 	Socket clock;
 	Socket server_clock;

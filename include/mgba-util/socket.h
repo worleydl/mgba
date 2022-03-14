@@ -152,6 +152,62 @@ static inline int SocketClose(Socket socket) {
 #endif
 }
 
+static inline Socket SocketOpenUDP(int port, const struct Address* bindAddress) {
+#ifdef GEKKO
+	Socket sock = net_socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
+#else
+	Socket sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	int enable = 1;
+	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char *)&enable, sizeof(enable));
+#endif
+	if (SOCKET_FAILED(sock)) {
+		return sock;
+	}
+
+	int err;
+	if (!bindAddress) {
+		struct sockaddr_in bindInfo;
+		memset(&bindInfo, 0, sizeof(bindInfo));
+		bindInfo.sin_family = AF_INET;
+		bindInfo.sin_port = htons(port);
+#ifndef _3DS
+		bindInfo.sin_addr.s_addr = INADDR_ANY;
+#else
+		bindInfo.sin_addr.s_addr = gethostid();
+#endif
+#ifdef GEKKO
+		err = net_bind(sock, (struct sockaddr*) &bindInfo, sizeof(bindInfo));
+#else
+		err = bind(sock, (const struct sockaddr*) &bindInfo, sizeof(bindInfo));
+#endif
+	} else if (bindAddress->version == IPV4) {
+		struct sockaddr_in bindInfo;
+		memset(&bindInfo, 0, sizeof(bindInfo));
+		bindInfo.sin_family = AF_INET;
+		bindInfo.sin_port = htons(port);
+		bindInfo.sin_addr.s_addr = htonl(bindAddress->ipv4);
+#ifdef GEKKO
+		err = net_bind(sock, (struct sockaddr*) &bindInfo, sizeof(bindInfo));
+#else
+		err = bind(sock, (const struct sockaddr*) &bindInfo, sizeof(bindInfo));
+#endif
+#if !defined(_3DS) && !defined(GEKKO)
+	} else {
+		struct sockaddr_in6 bindInfo;
+		memset(&bindInfo, 0, sizeof(bindInfo));
+		bindInfo.sin6_family = AF_INET6;
+		bindInfo.sin6_port = htons(port);
+		memcpy(bindInfo.sin6_addr.s6_addr, bindAddress->ipv6, sizeof(bindInfo.sin6_addr.s6_addr));
+		err = bind(sock, (const struct sockaddr*) &bindInfo, sizeof(bindInfo));
+#endif
+	}
+	if (err) {
+		SocketClose(sock);
+		return INVALID_SOCKET;
+	}
+	return sock;
+}
+
 static inline Socket SocketOpenTCP(int port, const struct Address* bindAddress) {
 #ifdef GEKKO
 	Socket sock = net_socket(AF_INET, SOCK_STREAM, IPPROTO_IP);
