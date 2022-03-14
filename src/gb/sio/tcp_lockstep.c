@@ -30,13 +30,13 @@ static uint8_t GBSIOSocketWriteSC(struct GBSIODriver* driver, uint8_t value);
 static void _GBSIOSocketProcessEvents(struct mTiming* timing, void* driver, uint32_t cyclesLate);
 static void _finishTransfer(struct GBSIOSocket*, uint8_t);
 static bool _checkBroadcasts(struct GBSIOSocket*);
+static void _setSockTimeout(Socket, uint32_t);
 
 static bool _checkBroadcasts(struct GBSIOSocket* sock) {
 	sock->broadcast = SocketOpenUDP(27502, NULL);
 	SocketSetBlocking(sock->broadcast, true);
 
-	DWORD timeout = 3000;
-	setsockopt(sock->broadcast, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+	_setSockTimeout(sock->broadcast, 3000);
 
 	struct sockaddr_in from;
 	int fromSize = sizeof(from);
@@ -52,6 +52,18 @@ static bool _checkBroadcasts(struct GBSIOSocket* sock) {
 	}
 
 	return true;
+}
+
+static void _setSockTimeout(Socket s, uint32_t timeoutVal) {
+	#ifdef _WIN32
+	DWORD timeout = timeoutVal;
+	setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+	#else
+	struct timeval tv;
+	tv.tv_sec = timeoutVal / 1000;
+	tv.tv_usec = 0;
+	setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv))
+	#endif
 }
 
 bool GBSIOSocketInit(struct GBSIODriver* driver) {
@@ -152,8 +164,7 @@ void GBSIOSocketConnect(struct GBSIOSocket* sock, bool server) {
 	mLOG(GB_SIO, DEBUG, "Data: %i", sock->data);
 	mLOG(GB_SIO, DEBUG, "Clock: %i", sock->clock);
 
-	DWORD timeout = 500;
-	setsockopt(sock->data, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+	_setSockTimeout(sock->data, 500);
 
 	SocketSetBlocking(sock->clock, false);
 	SocketSetBlocking(sock->data, true);
