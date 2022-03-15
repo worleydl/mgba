@@ -84,7 +84,7 @@ static void _setSockTimeout(Socket s, uint32_t timeoutVal) {
 	struct timeval tv;
 	tv.tv_sec = timeoutVal / 1000;
 	tv.tv_usec = 0;
-	setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv))
+	setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
 	#endif
 }
 
