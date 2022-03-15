@@ -31,6 +31,7 @@ static void _GBSIOSocketProcessEvents(struct mTiming* timing, void* driver, uint
 static void _finishTransfer(struct GBSIOSocket*, uint8_t);
 static bool _checkBroadcasts(struct GBSIOSocket*);
 static void _setSockTimeout(Socket, uint32_t);
+static uint32_t _recvfrom(Socket s);
 
 static bool _checkBroadcasts(struct GBSIOSocket* sock) {
 	sock->broadcast = SocketOpenUDP(27502, NULL);
@@ -38,20 +39,41 @@ static bool _checkBroadcasts(struct GBSIOSocket* sock) {
 
 	_setSockTimeout(sock->broadcast, 3000);
 
-	struct sockaddr_in from;
-	int fromSize = sizeof(from);
-	uint8_t buffer;
 
 	mLOG(GB_SIO, DEBUG, "Checking for broadcast");
-	if(recvfrom(sock->broadcast, &buffer, sizeof(buffer), 0, (SOCKADDR *)&from, &fromSize) > 0) {
-		sock->serverIP.ipv4 = htonl(from.sin_addr.s_addr);
-
-		mLOG(GB_SIO, DEBUG, "Got IP: %s", inet_ntoa(from.sin_addr));
-		mLOG(GB_SIO, DEBUG, "Int IP: %iu", sock->serverIP.ipv4);
+	uint32_t addy = _recvfrom(sock->broadcast);
+	if (addy > 0) {
+		sock->serverIP.ipv4 = htonl(addy);
 		return false;
 	}
 
 	return true;
+}
+
+static uint32_t _recvfrom(Socket s) {
+	struct sockaddr_in from;
+	int fromSize = sizeof(from);
+	uint8_t buffer;
+
+	#ifdef _WIN32
+
+	if(recvfrom(s, &buffer, sizeof(buffer), 0, (SOCKADDR *)&from, &fromSize) > 0) {
+		return from.sin_addr.s_addr;
+
+	} else {
+		return 0;
+	}
+
+	#else
+
+	if(recvfrom(s, &buffer, sizeof(buffer), 0, (struct sockaddr *)&from, &fromSize) > 0) {
+		return from.sin_addr.s_addr;
+
+	} else {
+		return 0;
+	}
+
+	#endif
 }
 
 static void _setSockTimeout(Socket s, uint32_t timeoutVal) {
@@ -79,6 +101,16 @@ bool GBSIOSocketInit(struct GBSIODriver* driver) {
 
 void GBSIOSocketDeinit(struct GBSIODriver* driver) {
 	struct GBSIOSocket* sock = (struct GBSIOSocket*) driver;
+
+	SocketClose(sock->clock);
+	SocketClose(sock->data);
+
+	if (m_serverMode) {
+		SocketClose(sock->server_clock);
+		SocketClose(sock->server_data);
+	}
+
+	// broadcast closed during connect
 }
 
 void GBSIOSocketCreate(struct GBSIOSocket* sock) {
