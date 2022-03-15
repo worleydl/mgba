@@ -28,10 +28,17 @@ static void GBSIOSocketDeinit(struct GBSIODriver* driver);
 static void GBSIOSocketWriteSB(struct GBSIODriver* driver, uint8_t value);
 static uint8_t GBSIOSocketWriteSC(struct GBSIODriver* driver, uint8_t value);
 static void _GBSIOSocketProcessEvents(struct mTiming* timing, void* driver, uint32_t cyclesLate);
+static void _GBSIOSocketSync(struct mTiming* timing, void* driver, uint32_t cyclesLate);
 static void _finishTransfer(struct GBSIOSocket*, uint8_t);
 static bool _checkBroadcasts(struct GBSIOSocket*);
 static void _setSockTimeout(Socket, uint32_t);
 static uint32_t _recvfrom(Socket s);
+static void _flush(Socket s);
+static void _flush(Socket s) {
+	uint8_t buffer[8];
+	SocketSetBlocking(s, false);
+	while (SocketRecv(s, &buffer, sizeof(buffer)) > 0) {}
+}
 
 static bool _checkBroadcasts(struct GBSIOSocket* sock) {
 	sock->broadcast = SocketOpenUDP(27502, NULL);
@@ -96,6 +103,14 @@ bool GBSIOSocketInit(struct GBSIODriver* driver) {
     sock->event.callback = _GBSIOSocketProcessEvents;
     sock->event.priority = 0x80;
 
+	sock->syncEvent.context = sock;
+	sock->syncEvent.name = "GB SIO TCPLINK Sync Event";
+	sock->syncEvent.callback = _GBSIOSocketSync;
+	sock->syncEvent.priority = 0x80;
+
+
+	mTimingSchedule(&driver->p->p->timing, &sock->syncEvent, 0);
+
 	return true;
 }
 
@@ -111,6 +126,9 @@ void GBSIOSocketDeinit(struct GBSIODriver* driver) {
 	}
 
 	// broadcast closed during connect
+
+	mTimingDeschedule(&sock->d.p->p->timing, &sock->event);
+	mTimingDeschedule(&sock->d.p->p->timing, &sock->syncEvent);
 }
 
 void GBSIOSocketCreate(struct GBSIOSocket* sock) {
@@ -128,6 +146,7 @@ void GBSIOSocketCreate(struct GBSIOSocket* sock) {
 void GBSIOSocketConnect(struct GBSIOSocket* sock, bool server) {
 
 	sock->pendingSB = 0xFF;
+	sock->needSync = false;
 
 
 	memset(&sock->serverIP, 0, sizeof(sock->serverIP));
@@ -192,6 +211,8 @@ void GBSIOSocketConnect(struct GBSIOSocket* sock, bool server) {
 		sock->clock = SocketConnectTCP(27501, &sock->serverIP);
 	}
 
+	_flush(sock->data);
+	_flush(sock->clock);
 
 	mLOG(GB_SIO, DEBUG, "Data: %i", sock->data);
 	mLOG(GB_SIO, DEBUG, "Clock: %i", sock->clock);
@@ -206,6 +227,7 @@ void GBSIOSocketConnect(struct GBSIOSocket* sock, bool server) {
 	// Note: SocketClose caused a crash here, and if you leave this socket
 	// open for some reason the main data sockets can no long stay in sync
 	close(sock->broadcast);
+
 }
 
 static void _GBSIOSocketProcessEvents(struct mTiming* timing, void* driver, uint32_t cyclesLate) {
@@ -230,8 +252,11 @@ static void _finishTransfer(struct GBSIOSocket* sock, uint8_t update) {
 }
 
 
-void GBSIOSocketSync(struct GBSIOSocket* node) {
+static void _GBSIOSocketSync(struct mTiming* timing, void* driver, uint32_t cyclesLate) {
+	struct GBSIOSocket* node = driver;
+
 	if (node->processing) {
+		mTimingSchedule(&node->d.p->p->timing, &node->syncEvent, 32);
 		return;
 	}
 
@@ -245,6 +270,8 @@ void GBSIOSocketSync(struct GBSIOSocket* node) {
 
 		_finishTransfer(node, buffer[1]);
 	}
+
+	mTimingSchedule(&node->d.p->p->timing, &node->syncEvent, 32);
 }
 
 static void GBSIOSocketWriteSB(struct GBSIODriver* driver, uint8_t value) {
@@ -261,18 +288,15 @@ static uint8_t GBSIOSocketWriteSC(struct GBSIODriver* driver, uint8_t value) {
 
 		// Shots fired
 		SocketSend(node->clock, &node->clockRequest, sizeof(node->clockRequest));
-		uint8_t buffer[2];
 
-		// Bad things will happen if the timeout is exceeded, but if the devices stay within
-		// things should work.  This effectively locks the emulation until devices sync
-		// their SB buffers and execution can resume on both.
-		if (SocketRecv(node->data, &buffer, sizeof(buffer)) == sizeof(buffer)){
+		uint8_t buffer[2];
+		if (SocketRecv(node->data, &buffer, sizeof(buffer)) == sizeof(buffer)) {
 			_finishTransfer(node, buffer[1]);
 		} else {
-			_finishTransfer(node, 0XFF);
+			_finishTransfer(node, 0xFF);  // Sim disconnect
 		}
 
-		mTimingDeschedule(&node->d.p->p->timing, &node->d.p->event);
+		mTimingDeschedule(&driver->p->p->timing, &node->d.p->event);
 	}
 
 	return value;

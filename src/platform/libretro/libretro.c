@@ -1664,8 +1664,6 @@ void retro_run(void) {
       updateAudioLatency = false;
    }
 
-	GBSIOSocketSync(sock);
-
 	core->runFrame(core);
 	unsigned width, height;
 	core->desiredVideoDimensions(core, &width, &height);

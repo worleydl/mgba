@@ -35,8 +35,10 @@ struct GBSIOSocket {
 	struct Address serverIP;
 
 	bool processing;
+	bool needSync;
 	enum mLockstepPhase transferActive;
 	struct mTimingEvent event;
+	struct mTimingEvent syncEvent;
 
 	Socket broadcast;
 
@@ -56,8 +58,6 @@ struct GBSIOSocket {
 
 void GBSIOSocketConnect(struct GBSIOSocket*, bool server);
 void GBSIOSocketCreate(struct GBSIOSocket*);
-void GBSIOSocketSync(struct GBSIOSocket*);
-bool GBSIOSocketBusy(struct GBSIOSocket*);
 
 static bool m_serverMode = false;
 
