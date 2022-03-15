@@ -158,7 +158,10 @@ static inline Socket SocketOpenUDP(int port, const struct Address* bindAddress) 
 #else
 	Socket sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	int enable = 1;
+
+	#ifdef _WIN32
 	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char *)&enable, sizeof(enable));
+	#endif
 #endif
 	if (SOCKET_FAILED(sock)) {
 		return sock;

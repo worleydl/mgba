@@ -155,7 +155,7 @@ void GBSIOSocketConnect(struct GBSIOSocket* sock, bool server) {
 
 		// Setup broadcast mode on broadcast socket
 		uint8_t broadcastEnable = 1;
-		setsockopt(sock->broadcast, SOL_SOCKET, SO_BROADCAST, &broadcastEnable, sizeof(broadcastEnable));
+		setsockopt(sock->broadcast, SOL_SOCKET, SO_BROADCAST, (void *) &broadcastEnable, sizeof(broadcastEnable));
 
 		struct sockaddr_in broadcastAddr;
 		memset(&broadcastAddr, 0, sizeof(broadcastAddr));
@@ -196,7 +196,7 @@ void GBSIOSocketConnect(struct GBSIOSocket* sock, bool server) {
 	mLOG(GB_SIO, DEBUG, "Data: %i", sock->data);
 	mLOG(GB_SIO, DEBUG, "Clock: %i", sock->clock);
 
-	_setSockTimeout(sock->data, 500);
+	_setSockTimeout(sock->data, 1000);
 
 	SocketSetBlocking(sock->clock, false);
 	SocketSetBlocking(sock->data, true);
