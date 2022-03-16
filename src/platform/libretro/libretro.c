@@ -18,7 +18,7 @@
 #include <mgba/internal/gb/gb.h>
 #include <mgba/internal/gb/mbc.h>
 #include <mgba/internal/gb/overrides.h>
-#include <mgba/internal/gb/sio/tcp_lockstep.h>
+#include <mgba/internal/gb/sio/udp_sio.h>
 #endif
 #ifdef M_CORE_GBA
 #include <mgba/gba/core.h>
@@ -134,7 +134,7 @@ static int32_t audioLowPassRange = 0;
 static int32_t audioLowPassLeftPrev = 0;
 static int32_t audioLowPassRightPrev = 0;
 
-static struct GBSIOSocket* sock;
+static struct GBSIOUDP* sock;
 
 static const int keymap[] = {
 	RETRO_DEVICE_ID_JOYPAD_A,
@@ -2140,9 +2140,9 @@ bool retro_load_game(const struct retro_game_info* game) {
 
 	#ifdef M_CORE_GB
 	struct GB* gb = (struct GB*) core->board;
-	sock = malloc(sizeof(struct GBSIOSocket));
-	GBSIOSocketCreate(sock);
-	GBSIOSocketConnect(sock, core->opts.linkServer);
+	sock = malloc(sizeof(struct GBSIOUDP));
+	GBSIOUDPCreate(sock);
+	GBSIOUDPConnect(sock, core->opts.linkServer);
 	GBSIOSetDriver(&gb->sio, &sock->d);
 
 	#endif
