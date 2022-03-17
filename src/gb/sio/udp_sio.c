@@ -24,9 +24,26 @@ static void _GBSIOUDPSync(struct mTiming* timing, void* driver, uint32_t cyclesL
 static void _finishTransfer(struct GBSIOUDP*, uint8_t, int);
 static bool _checkBroadcasts(struct GBSIOUDP*);
 static void _setSockTimeout(Socket, uint32_t);
-static uint32_t _recvbcast(Socket s);
 
-static void _recvfrom(struct GBSIOUDP*, uint8_t*, int);
+static int _recvfrom(Socket s, uint8_t* buffer, int bufferSize, struct sockaddr_in* addy, int addySize);
+static int _recvfrom(Socket s, uint8_t* buffer, int bufferSize, struct sockaddr_in* addy, int addySize) {
+	#ifdef _WIN32
+		return recvfrom(s, buffer, bufferSize, 0, (SOCKADDR*) addy, &addySize);
+	#else
+		return recvfrom(s, buffer, bufferSize, 0, (struct sockaddr*) addy, &addySize);
+	#endif
+}
+
+
+static int _broadcast(Socket s, uint8_t* buffer, int bufferSize, struct sockaddr_in* addy, int addySize);
+static int _broadcast(Socket s, uint8_t* buffer, int bufferSize, struct sockaddr_in* addy, int addySize) {
+	#ifdef _WIN32
+		return sendto(s, buffer, bufferSize, 0, (SOCKADDR*) addy, addySize);
+	#else
+		return sendto(s, buffer, bufferSize, 0, (struct sockaddr*) addy, addySize);
+	#endif
+}
+
 
 
 static void _flush(Socket s);
@@ -43,53 +60,33 @@ static bool _checkBroadcasts(struct GBSIOUDP* sock) {
 
 
 	mLOG(GB_SIO, DEBUG, "Checking for broadcast");
-	uint32_t addy = _recvbcast(sock->broadcast);
-	if (addy > 0) {
-		sock->serveraddr.sin_family = AF_INET;
-		sock->serveraddr.sin_port = htons(27500);
-		sock->serveraddr.sin_addr.s_addr = addy;
-		return false;
-	}
-
-	return true;
-}
-
-// TODO: Just return the from pointer?
-static uint32_t _recvbcast(Socket s) {
+	uint8_t buffer;
 	struct sockaddr_in from;
 	int fromSize = sizeof(from);
-	uint8_t buffer;
-
-	#ifdef _WIN32
-
-	if(recvfrom(s, &buffer, sizeof(buffer), 0, (SOCKADDR *)&from, &fromSize) > 0) {
-		return from.sin_addr.s_addr;
-
-
-	} else {
-		return 0;
+	if (_recvfrom(sock->broadcast, &buffer, sizeof(buffer), &from, fromSize) > 0) {
+		sock->serveraddr.sin_addr.s_addr = from.sin_addr.s_addr;
+		return true;
 	}
 
-	#else
-
-	if(recvfrom(s, &buffer, sizeof(buffer), 0, (struct sockaddr *)&from, &fromSize) > 0) {
-		return from.sin_addr.s_addr;
-
-	} else {
-		return 0;
-	}
-
-	#endif
+	return false;
 }
 
 static void _sendto(struct GBSIOUDP* s, uint8_t* data, int dataSize) {
 	int addrSize = sizeof(s->clientaddr);
 
+	#ifdef _WIN32
 	if (m_serverMode) {
 		sendto(s->data, data, dataSize, 0, (SOCKADDR*)&s->clientaddr, addrSize);
 	} else {
-		sendto(s->data, data, dataSize, 0, (SOCKADDR*) &s->serveraddr, addrSize);
+		sendto(s->data, data, dataSize, 0, (SOCKADDR*)&s->serveraddr, addrSize);
 	}
+	#else
+	if (m_serverMode) {
+		sendto(s->data, data, dataSize, 0, (struct sockaddr*)&s->clientaddr, addrSize);
+	} else {
+		sendto(s->data, data, dataSize, 0, (struct sockaddr*)&s->serveraddr, addrSize);
+	}
+	#endif
 }
 
 static void _setSockTimeout(Socket s, uint32_t timeoutVal) {
@@ -154,9 +151,11 @@ void GBSIOUDPConnect(struct GBSIOUDP* sock, bool server) {
 
 	memset(&sock->clientaddr, 0, sizeof(sock->clientaddr));
 	memset(&sock->serveraddr, 0, sizeof(sock->serveraddr));
+	sock->serveraddr.sin_family = AF_INET;
+	sock->serveraddr.sin_port = htons(27500);
 
 	SocketSubsystemInit();
-	m_serverMode = _checkBroadcasts(sock);
+	m_serverMode = !_checkBroadcasts(sock);
 
 
 	uint8_t joinSig = 0;
@@ -179,8 +178,8 @@ void GBSIOUDPConnect(struct GBSIOUDP* sock, bool server) {
 
 		// Broadcast so client can pick up address and join
 		int clientaddrSize = sizeof(sock->clientaddr);
-		while ( recvfrom(sock->data, &joinSig, sizeof(joinSig), 0, (SOCKADDR*)&sock->clientaddr, &clientaddrSize) <= 0) {
-			sendto(sock->broadcast, &broadcastEnable, sizeof(broadcastEnable), 0, (struct sockaddr *) &broadcastAddr, sizeof(broadcastAddr));
+		while (_recvfrom(sock->data, &joinSig, sizeof(joinSig), &sock->clientaddr, clientaddrSize) <= 0) {
+			_broadcast(sock->broadcast, &broadcastEnable, sizeof(broadcastEnable), &broadcastAddr, sizeof(broadcastAddr));
 			sleep(0.25);
 		}
 	} else {
@@ -223,7 +222,7 @@ static void _GBSIOUDPSync(struct mTiming* timing, void* driver, uint32_t cyclesL
 	struct GBSIOUDP* node = driver;
 
 	if (node->processing) {
-		mTimingSchedule(&node->d.p->p->timing, &node->syncEvent, 32);
+		mTimingSchedule(&node->d.p->p->timing, &node->syncEvent, 24);
 		return;
 	}
 
@@ -240,7 +239,7 @@ static void _GBSIOUDPSync(struct mTiming* timing, void* driver, uint32_t cyclesL
 		}
 	}
 
-	mTimingSchedule(&node->d.p->p->timing, &node->syncEvent, 32);
+	mTimingSchedule(&node->d.p->p->timing, &node->syncEvent, 24);
 }
 
 static void GBSIOUDPWriteSB(struct GBSIODriver* driver, uint8_t value) {
